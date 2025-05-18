@@ -113,7 +113,7 @@ int main() {
         std::cout << "Parent pausing...\n";
 
         while (!signal_received) {
-            pause();
+            sleep(1);
         }
     
         std::cout << "Parent geting child status..." << std::endl;

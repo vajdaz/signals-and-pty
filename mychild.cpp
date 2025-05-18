@@ -6,7 +6,9 @@
 volatile sig_atomic_t signal_received = 0;
 
 void signal_handler(int signum) {
-    signal_received = signum;
+    if (signum   == SIGHUP) {
+        signal_received = signum;
+    }
 
     const char* msg1 = "Child received signal: ";
     const char* msg2 = strsignal(signum);
@@ -27,10 +29,14 @@ int main() {
         std::cout << "Child failed to setup SIGHUP handler.\n";
     }
 
+    if (sigaction(SIGCONT, &sa, nullptr) == -1) {
+        std::cout << "Child failed to setup SIGHUP handler.\n";
+    }
+
     std::cout << "Child pausing...\n";
 
     while (!signal_received) {
-        pause();
+        sleep(1);
     }
     
     std::cout << "Child exiting.\n";
