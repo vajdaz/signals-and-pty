@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <unistd.h>
 #include <sys/types.h>
@@ -25,8 +27,34 @@ int main() {
     int master_fd, slave_fd;
 
     // Create a pseudo-terminal pair
-    if (openpty(&master_fd, &slave_fd, nullptr, nullptr, nullptr) == -1) {
-        std::cerr << "Failed to create pseudo-terminal pair!" << std::endl;
+    if ( (master_fd = TEMP_FAILURE_RETRY(open("/dev/ptmx",O_RDWR))) < 0 ) {
+        perror("open /dev/ptmx failed");
+        return 1;
+    }
+
+    if ( fcntl(master_fd,F_SETFD,FD_CLOEXEC) == -1 ) {
+        perror("set close_on_exec failed");
+        return 1;
+    }
+
+    char slave_name[64];
+    if ( ptsname_r(master_fd, slave_name, sizeof(slave_name)) != 0 ) {
+        perror("ptsname_r failed");
+        return 1;
+    }
+
+    if ( unlockpt(master_fd) < 0 ) {
+        perror("unlockpt failed");
+        return 1;
+    }
+    
+    if ( grantpt(master_fd) < 0 ) {
+        perror("grantpt failed");
+        return 1;
+    }
+    
+    if ( (slave_fd = TEMP_FAILURE_RETRY(open(slave_name,O_RDWR))) < 0 ) {
+        perror("open slave failed");
         return 1;
     }
 
@@ -36,15 +64,15 @@ int main() {
     sa.sa_flags = 0;
 
     if (sigaction(SIGCHLD, &sa, nullptr) == -1) {
-        std::cout << "Parent failed to setup SIGCHLD handler.\n";
+        perror("setup SIGCHLD handler failed in parent");
+        return 1;
     }
-
 
     pid_t pid = fork();
 
     if (pid < 0) {
         // Fork failed
-        std::cerr << "Fork failed!" << std::endl;
+        perror("fork failed!");
         return 1;
     } else if (pid == 0) {
         // Child process
@@ -56,7 +84,7 @@ int main() {
 
         // Set the controlling terminal to the slave side of the pseudo-terminal.
         if (ioctl(slave_fd, TIOCSCTTY, nullptr) == -1) {
-            std::cerr << "Parent failed to set controlling terminal!" << std::endl;
+            perror("failed to set controlling terminal in child");
             return 1;
         }
 
@@ -67,17 +95,20 @@ int main() {
         // the file it represents would be accessed via STDIN_FILENO and not slave_fd would
         // have no use any more.
         close(master_fd);
-        close(slave_fd);
+
+        TEMP_FAILURE_RETRY(dup2(slave_fd,0));
+        TEMP_FAILURE_RETRY(close(slave_fd));
 
         execl("./mychild", "./mychild", (char *)NULL);
         // A successful execl never returns. If it does, it means there was an error.
-        std::cerr << "execl failed!" << std::endl;
+        perror("execl failed in child");
         return 1;
     } else {
         // Parent process
 
-        // Close the slave file descriptor in the parent
-        close(slave_fd);
+        // Close the slave file descriptor in the parent, we definitely don't want to
+        // use it. Master will be closed on exit, see above.
+        TEMP_FAILURE_RETRY(close(slave_fd));
 
         std::cout << "Parent pausing...\n";
 
@@ -85,16 +116,14 @@ int main() {
             pause();
         }
     
-        std::cout << "Parent get child status..." << std::endl;
+        std::cout << "Parent geting child status..." << std::endl;
         int status;
-        waitpid(pid, &status, 0);
+        TEMP_FAILURE_RETRY(waitpid(pid, &status, 0));
         if (WIFEXITED(status)) {
             std::cout << "Parent: Child process exited with status: " << WEXITSTATUS(status) << std::endl;
         } else {
             std::cout << "Parent: Child process did not exit normally." << std::endl;
         }
-
-        close(master_fd);
     }
 
     return 0;
