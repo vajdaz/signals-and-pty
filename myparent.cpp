@@ -9,10 +9,12 @@
 #include <signal.h>
 #include <cstring>
 
-volatile sig_atomic_t signal_received = 0;
+volatile sig_atomic_t child_died = 0;
 
 void signal_handler(int signum) {
-    signal_received = signum;
+    if (signum != SIGCHLD) {
+        child_died = signum;
+    }
 
     const char* msg1 = "Parent receiving signal: ";
     const char* msg2 = strsignal(signum);
@@ -27,13 +29,8 @@ int main() {
     int master_fd, slave_fd;
 
     // Create a pseudo-terminal pair
-    if ( (master_fd = TEMP_FAILURE_RETRY(open("/dev/ptmx",O_RDWR))) < 0 ) {
+    if ( (master_fd = TEMP_FAILURE_RETRY(open("/dev/ptmx", O_RDWR | O_CLOEXEC))) < 0 ) {
         perror("open /dev/ptmx failed");
-        return 1;
-    }
-
-    if ( fcntl(master_fd,F_SETFD,FD_CLOEXEC) == -1 ) {
-        perror("set close_on_exec failed");
         return 1;
     }
 
@@ -53,7 +50,7 @@ int main() {
         return 1;
     }
     
-    if ( (slave_fd = TEMP_FAILURE_RETRY(open(slave_name,O_RDWR))) < 0 ) {
+    if ( (slave_fd = TEMP_FAILURE_RETRY(open(slave_name, O_RDWR))) < 0 ) {
         perror("open slave failed");
         return 1;
     }
@@ -71,7 +68,6 @@ int main() {
     pid_t pid = fork();
 
     if (pid < 0) {
-        // Fork failed
         perror("fork failed!");
         return 1;
     } else if (pid == 0) {
@@ -94,9 +90,10 @@ int main() {
         // simmilar for stdout and stderr. Even then the slave_fd would be closed because
         // the file it represents would be accessed via STDIN_FILENO and not slave_fd would
         // have no use any more.
-        close(master_fd);
-
-        TEMP_FAILURE_RETRY(dup2(slave_fd,0));
+        TEMP_FAILURE_RETRY(close(master_fd));
+        //TEMP_FAILURE_RETRY(dup2(slave_fd, STDIN_FILENO));
+        //TEMP_FAILURE_RETRY(dup2(slave_fd, STDOUT_FILENO));
+        //TEMP_FAILURE_RETRY(dup2(slave_fd, STDERR_FILENO));
         TEMP_FAILURE_RETRY(close(slave_fd));
 
         execl("./mychild", "./mychild", (char *)NULL);
@@ -110,13 +107,7 @@ int main() {
         // use it. Master will be closed on exit, see above.
         TEMP_FAILURE_RETRY(close(slave_fd));
 
-        std::cout << "Parent pausing...\n";
-
-        while (!signal_received) {
-            sleep(1);
-        }
-    
-        std::cout << "Parent geting child status..." << std::endl;
+        std::cout << "Parent: waiting for child to die..." << std::endl;
         int status;
         TEMP_FAILURE_RETRY(waitpid(pid, &status, 0));
         if (WIFEXITED(status)) {
@@ -125,6 +116,4 @@ int main() {
             std::cout << "Parent: Child process did not exit normally." << std::endl;
         }
     }
-
-    return 0;
 }

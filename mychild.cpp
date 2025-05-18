@@ -3,11 +3,11 @@
 #include <cstring>
 #include <iostream>
 
-volatile sig_atomic_t signal_received = 0;
+volatile sig_atomic_t child_died = 0;
 
 void signal_handler(int signum) {
     if (signum   == SIGHUP) {
-        signal_received = signum;
+        child_died = signum;
     }
 
     const char* msg1 = "Child received signal: ";
@@ -35,7 +35,7 @@ int main() {
 
     std::cout << "Child pausing...\n";
 
-    while (!signal_received) {
+    while (!child_died) {
         sleep(1);
     }
     
