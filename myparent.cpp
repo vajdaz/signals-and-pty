@@ -26,17 +26,11 @@ void signal_handler(int signum) {
 }
 
 int main() {
-    int master_fd, slave_fd;
-
     // Create a pseudo-terminal pair
-    if ( (master_fd = TEMP_FAILURE_RETRY(open("/dev/ptmx", O_RDWR | O_CLOEXEC))) < 0 ) {
-        perror("open /dev/ptmx failed");
-        return 1;
-    }
+    int master_fd = TEMP_FAILURE_RETRY(open("/dev/ptmx", O_RDWR | O_CLOEXEC));
 
-    char slave_name[64];
-    if ( ptsname_r(master_fd, slave_name, sizeof(slave_name)) != 0 ) {
-        perror("ptsname_r failed");
+    if ( master_fd < 0 ) {
+        perror("open /dev/ptmx failed");
         return 1;
     }
 
@@ -50,11 +44,6 @@ int main() {
         return 1;
     }
     
-    if ( (slave_fd = TEMP_FAILURE_RETRY(open(slave_name, O_RDWR))) < 0 ) {
-        perror("open slave failed");
-        return 1;
-    }
-
     struct sigaction sa{};
     sa.sa_handler = signal_handler;
     sigemptyset(&sa.sa_mask);
@@ -75,12 +64,20 @@ int main() {
 
         // Create a new session. This detaches the child process from the terminal and
         // makes it the leader of a new session This is important for the child process
-        // to not be affected by the signals of the parent.
+        // to not be affected by the signals of the parent. After this call the child
+        // will not have a controlling terminal.
         setsid();
 
-        // Set the controlling terminal to the slave side of the pseudo-terminal.
-        if (ioctl(slave_fd, TIOCSCTTY, nullptr) == -1) {
-            perror("failed to set controlling terminal in child");
+        char slave_name[64];
+        if ( ptsname_r(master_fd, slave_name, sizeof(slave_name)) != 0 ) {
+            perror("ptsname_r failed");
+            return 1;
+        }
+
+        // The fist terminal opened by the child process becomes the controlling terminal.
+        int slave_fd = TEMP_FAILURE_RETRY(open(slave_name, O_RDWR));
+        if ( slave_fd < 0 ) {
+            perror("open slave failed");
             return 1;
         }
 
@@ -91,7 +88,7 @@ int main() {
         // the file it represents would be accessed via STDIN_FILENO and not slave_fd would
         // have no use any more.
         TEMP_FAILURE_RETRY(close(master_fd));
-        //TEMP_FAILURE_RETRY(dup2(slave_fd, STDIN_FILENO));
+        TEMP_FAILURE_RETRY(dup2(slave_fd, STDIN_FILENO));
         //TEMP_FAILURE_RETRY(dup2(slave_fd, STDOUT_FILENO));
         //TEMP_FAILURE_RETRY(dup2(slave_fd, STDERR_FILENO));
         TEMP_FAILURE_RETRY(close(slave_fd));
@@ -102,10 +99,6 @@ int main() {
         return 1;
     } else {
         // Parent process
-
-        // Close the slave file descriptor in the parent, we definitely don't want to
-        // use it. Master will be closed on exit, see above.
-        TEMP_FAILURE_RETRY(close(slave_fd));
 
         std::cout << "Parent: waiting for child to die..." << std::endl;
         int status;
