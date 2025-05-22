@@ -39,6 +39,9 @@ int main() {
         return 1;
     }
     
+    // The documentation says that the behavior of grantpt is undefined if
+    // a signal handler is installed to cach SIGCHLD. Therefor we call it
+    // before we install the signal handler.
     if ( grantpt(master_fd) < 0 ) {
         perror("grantpt failed");
         return 1;
